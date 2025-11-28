@@ -12,7 +12,7 @@ We hit segmentation faults with the system Python, so everything runs inside a d
 cd /YOUR/PATH/rhythm
 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m venv .venv
 source .venv/bin/activate
-pip install numpy==1.26.4 pillow==10.3.0 ffmpeg-python==0.2.0
+pip install numpy==1.26.4 pillow==10.3.0 ffmpeg-python==0.2.0 opencv-python==4.10.0.84
 ```
 
 Activate the env (`source .venv/bin/activate`) before running any script. Run `deactivate` when finished.
@@ -24,7 +24,7 @@ Activate the env (`source .venv/bin/activate`) before running any script. Run `d
 | Step | Required? | Command / Notes |
 |------|-----------|----------------|
 |Check current assets|Optional but helpful|`python3 checkDataStatus.py`|
-|Download videos|Optional (only needed for frame extraction)|`python3 downloadSplitVideos.py --split pose_train --numProcesses 4`<br/>If CDN URLs 404, download manually from [AIST Dance DB](https://aistdancedb.ongaaccel.jp/).|
+|Download videos|**Required** if you need frames/RTM Pose|`python3 downloadSplitVideos.py --split pose_train --numProcesses 4`<br/>If CDN URLs 404, download manually from [AIST Dance DB](https://aistdancedb.ongaaccel.jp/). Skip only if videos already exist locally.|
 |Inspect splits / statistics|Optional|`python3 loadAistData.py --annoDir . --stats`|
 |Extract frames aligned with annotations|**Required** for RTM Pose/workflows needing images|`python3 extractVideoFrames.py --split pose_train --alignWithAnnotations`<br/>Repeat for `pose_val` / `pose_test` if needed. Generates JPEG frames plus `frame_mapping.json` metadata using FFmpeg (exact 60 FPS or annotation timestamps).|
 |Convert to RTM Pose COCO format|**Required** for training|`python3 convertToRTMPose.py --split pose_train --outputDir rtmpose_dataset`<br/>Run for each split you plan to use.|
