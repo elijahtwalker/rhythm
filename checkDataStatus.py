@@ -31,14 +31,20 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
         
         # Check if videos exist
         for videoName in videoNames:
+            videoFound = False
+            
             # Check in main video directory
             if (videoDir / f"{videoName}.mp4").exists():
                 stats['videos'] += 1
+                videoFound = True
             
             # Check in split-specific directory
             splitVideoDir = videoDir / splitName
             if splitVideoDir.exists() and (splitVideoDir / f"{videoName}.mp4").exists():
                 stats['videosInSplitDir'] += 1
+                if not videoFound:
+                    stats['videos'] += 1
+                    videoFound = True
             
             # Check keypoints2d
             if keypoints2dDir and (keypoints2dDir / f"{videoName}.pkl").exists():
