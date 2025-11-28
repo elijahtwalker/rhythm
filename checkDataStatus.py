@@ -6,6 +6,8 @@ Shows what data is available and what needs to be downloaded.
 
 from pathlib import Path
 
+SKIP_SPLITS = {'pose_train_sample'}
+
 
 def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
     """Check status of data for each split."""
@@ -17,6 +19,8 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
     
     for splitFile in splitsDir.glob("*.txt"):
         splitName = splitFile.stem
+        if splitName in SKIP_SPLITS:
+            continue
         
         # Read video names from split
         with open(splitFile, 'r') as f:
@@ -26,17 +30,22 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
             'total': len(videoNames),
             'videos': 0,
             'keypoints2d': 0,
-            'videosInSplitDir': 0
+            'videosInSplitDir': 0,
+            'videoNames': set(),
+            'downloadedVideos': set(),
+            'keypointVideos': set()
         }
         
         # Check if videos exist
         for videoName in videoNames:
             videoFound = False
+            stats['videoNames'].add(videoName)
             
             # Check in main video directory
             if (videoDir / f"{videoName}.mp4").exists():
                 stats['videos'] += 1
                 videoFound = True
+                stats['downloadedVideos'].add(videoName)
             
             # Check in split-specific directory
             splitVideoDir = videoDir / splitName
@@ -45,10 +54,12 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
                 if not videoFound:
                     stats['videos'] += 1
                     videoFound = True
+                    stats['downloadedVideos'].add(videoName)
             
             # Check keypoints2d
             if keypoints2dDir and (keypoints2dDir / f"{videoName}.pkl").exists():
                 stats['keypoints2d'] += 1
+                stats['keypointVideos'].add(videoName)
         
         results[splitName] = stats
     
@@ -61,14 +72,14 @@ def printStatusReport(results):
     print("AIST++ Dataset Status Report")
     print("="*70)
     
-    totalVideos = 0
-    totalDownloaded = 0
-    totalKeypoints = 0
+    uniqueVideos = set()
+    uniqueDownloaded = set()
+    uniqueKeypoints = set()
     
     for splitName, stats in sorted(results.items()):
-        totalVideos += stats['total']
-        totalDownloaded += stats['videos']
-        totalKeypoints += stats['keypoints2d']
+        uniqueVideos.update(stats.get('videoNames', []))
+        uniqueDownloaded.update(stats.get('downloadedVideos', []))
+        uniqueKeypoints.update(stats.get('keypointVideos', []))
         
         print(f"\n{splitName}:")
         print(f"  Total videos in split: {stats['total']}")
@@ -77,16 +88,24 @@ def printStatusReport(results):
         if stats.get('keypoints2d', 0) > 0:
             print(f"  Keypoints2D available: {stats['keypoints2d']} ({100*stats['keypoints2d']/stats['total']:.1f}%)")
     
+    totalVideos = len(uniqueVideos)
+    totalDownloaded = len(uniqueDownloaded)
+    totalKeypoints = len(uniqueKeypoints)
+    
     print("\n" + "-"*70)
     print("Summary:")
-    print(f"  Total videos across all splits: {totalVideos}")
-    print(f"  Videos downloaded: {totalDownloaded} ({100*totalDownloaded/totalVideos:.1f}%)")
-    print(f"  Keypoints2D available: {totalKeypoints} ({100*totalKeypoints/totalVideos:.1f}%)")
+    print(f"  Total unique videos: {totalVideos}")
+    if totalVideos > 0:
+        print(f"  Videos downloaded: {totalDownloaded} ({100*totalDownloaded/totalVideos:.1f}%)")
+        print(f"  Keypoints2D available: {totalKeypoints} ({100*totalKeypoints/totalVideos:.1f}%)")
+    else:
+        print("  Videos downloaded: 0 (0.0%)")
+        print("  Keypoints2D available: 0 (0.0%)")
     print("="*70)
     
     # Recommendations
     print("\nRecommendations:")
-    if totalDownloaded < totalVideos:
+    if totalVideos > 0 and totalDownloaded < totalVideos:
         missing = totalVideos - totalDownloaded
         print(f"  - Download {missing} missing videos:")
         print(f"    python3 downloadSplitVideos.py --split all --numProcesses 4")
