@@ -5,3 +5,5 @@ splits/
 videos/
 keypoints2d/
 __pycache__/
+*.jpg
+*.json

@@ -4,12 +4,61 @@ Extract frames from videos at exactly 60 FPS.
 Converts videos to image sequences, resampling to 60 FPS regardless of original FPS.
 """
 
-import cv2
 import argparse
-from pathlib import Path
-import numpy as np
-import pickle
 import json
+import pickle
+from pathlib import Path
+
+import cv2
+import ffmpeg
+import numpy as np
+
+
+def parseFpsValue(fpsString):
+    """Parse fps string from ffmpeg metadata (e.g., '30000/1001')."""
+    if not fpsString or fpsString in ('0/0', '0'):
+        return 0.0
+    if '/' in fpsString:
+        num, den = fpsString.split('/')
+        den = float(den) if float(den) != 0 else 1.0
+        return float(num) / den
+    return float(fpsString)
+
+
+def ffmpegVideoRead(videoPath, targetFPS=None):
+    """
+    Read video frames using ffmpeg, optionally resampling to targetFPS.
+    
+    Returns:
+        frames (np.ndarray): shape (num_frames, H, W, 3) in RGB
+        originalFPS (float): original video FPS from metadata
+    """
+    videoPath = Path(videoPath)
+    if not videoPath.exists():
+        raise FileNotFoundError(f"{videoPath} does not exist")
+    
+    probe = ffmpeg.probe(str(videoPath))
+    videoStream = next(stream for stream in probe['streams'] if stream['codec_type'] == 'video')
+    
+    width = int(videoStream['width'])
+    height = int(videoStream['height'])
+    originalFPS = parseFpsValue(videoStream.get('avg_frame_rate')) or parseFpsValue(videoStream.get('r_frame_rate'))
+    
+    stream = ffmpeg.input(str(videoPath))
+    if targetFPS:
+        stream = stream.filter('fps', fps=targetFPS, round='down')
+    
+    stream = ffmpeg.output(stream, 'pipe:', format='rawvideo', pix_fmt='rgb24')
+    out, _ = ffmpeg.run(stream, capture_stdout=True, capture_stderr=True, quiet=True)
+    
+    frameArray = np.frombuffer(out, np.uint8)
+    frameSize = height * width * 3
+    if frameArray.size % frameSize != 0:
+        raise ValueError("FFmpeg output size is not divisible by frame dimensions; video may be corrupted.")
+    
+    frameCount = frameArray.size // frameSize
+    frames = frameArray.reshape((frameCount, height, width, 3))
+    return frames, float(originalFPS)
 
 
 def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None):
@@ -36,72 +85,54 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
     if annotationPath and Path(annotationPath).exists():
         with open(annotationPath, 'rb') as f:
             annotationData = pickle.load(f)
-            timestamps = annotationData.get('timestamps', None)
-            if timestamps is not None:
+            rawTimestamps = annotationData.get('timestamps', None)
+            if rawTimestamps is not None:
+                timestamps = np.asarray(rawTimestamps).astype(float).tolist()
                 annotationFrameCount = len(timestamps)
                 print(f"  Found {annotationFrameCount} annotation frames")
     
-    # Open video
-    cap = cv2.VideoCapture(str(videoPath))
-    if not cap.isOpened():
-        raise ValueError(f"Could not open video: {videoPath}")
-    
-    # Get video properties
-    originalFPS = cap.get(cv2.CAP_PROP_FPS)
-    totalFrames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = totalFrames / originalFPS if originalFPS > 0 else 0
+    frames, originalFPS = ffmpegVideoRead(videoPath, targetFPS)
+    targetFPSUsed = targetFPS if targetFPS else originalFPS
+    duration = len(frames) / targetFPSUsed if targetFPSUsed else 0
     
     print(f"Video: {videoPath.name}")
     print(f"  Original FPS: {originalFPS:.2f}")
-    print(f"  Total frames: {totalFrames}")
+    print(f"  Frames after resample: {len(frames)}")
     print(f"  Duration: {duration:.2f} seconds")
-    print(f"  Extracting at {targetFPS} FPS...")
+    print(f"  Extracting at {targetFPSUsed:.2f} FPS...")
     
-    # If we have annotation timestamps, use them for frame extraction
+    # Determine timestamp targets
     if timestamps is not None:
-        # Timestamps are in milliseconds, convert to seconds
         targetTimes = [ts / 1000.0 for ts in timestamps]
         print(f"  Aligning with {len(targetTimes)} annotation timestamps")
     else:
-        # Calculate frame times at target FPS
-        expectedFrames = int(duration * targetFPS)
-        targetTimes = [i / targetFPS for i in range(expectedFrames)]
+        targetTimes = [i / targetFPSUsed for i in range(len(frames))]
     
-    frameCount = 0
-    savedCount = 0
-    frameMapping = {}  # Maps annotation frame index to extracted frame filename
+    frameMapping = {}
     extractedTimestamps = []
     
-    # Read through video and extract frames at target times
-    for targetTime in targetTimes:
-        # Seek to target time
-        cap.set(cv2.CAP_PROP_POS_MSEC, targetTime * 1000)
-        ret, frame = cap.read()
-        
-        if not ret:
-            # If we can't read at exact time, try to get closest frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(targetTime * originalFPS))
-            ret, frame = cap.read()
-        
-        if ret:
-            # Save frame with annotation-aligned index
-            frameIndex = savedCount
-            framePath = outputDir / f"frame_{frameIndex:06d}.jpg"
-            cv2.imwrite(str(framePath), frame)
-            
-            # Store mapping
-            frameMapping[frameIndex] = {
-                'filename': framePath.name,
-                'timestamp_ms': int(targetTime * 1000),
-                'timestamp_sec': targetTime,
-                'annotation_index': frameIndex if timestamps else None
-            }
-            extractedTimestamps.append(int(targetTime * 1000))
-            savedCount += 1
-        else:
-            print(f"  Warning: Could not extract frame at {targetTime:.3f}s")
+    savedCount = 0
+    maxFrames = min(len(frames), len(targetTimes))
+    if len(frames) != len(targetTimes):
+        print(f"  Note: Frame count ({len(frames)}) and timestamp count ({len(targetTimes)}) differ; using {maxFrames} aligned frames.")
     
-    cap.release()
+    for frameIndex in range(maxFrames):
+        frame = frames[frameIndex]
+        targetTime = targetTimes[frameIndex]
+        framePath = outputDir / f"frame_{frameIndex:06d}.jpg"
+        
+        # Convert RGB to BGR for OpenCV writing
+        frameBGR = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(str(framePath), frameBGR)
+        
+        frameMapping[frameIndex] = {
+            'filename': framePath.name,
+            'timestamp_ms': int(targetTime * 1000),
+            'timestamp_sec': targetTime,
+            'annotation_index': frameIndex if timestamps is not None else None
+        }
+        extractedTimestamps.append(int(targetTime * 1000))
+        savedCount += 1
     
     # Save frame mapping metadata
     metadataPath = outputDir / 'frame_mapping.json'
@@ -109,7 +140,7 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
         json.dump({
             'video_name': videoPath.stem,
             'original_fps': float(originalFPS),
-            'target_fps': targetFPS,
+            'target_fps': targetFPSUsed,
             'total_frames': savedCount,
             'frame_mapping': frameMapping,
             'timestamps_ms': extractedTimestamps,
@@ -120,7 +151,7 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
     print(f"  Frames saved to: {outputDir}")
     print(f"  Frame mapping saved to: {metadataPath}")
     
-    if timestamps and savedCount != annotationFrameCount:
+    if timestamps is not None and savedCount != annotationFrameCount:
         print(f"  ⚠ Warning: Extracted {savedCount} frames but annotations have {annotationFrameCount} frames")
     
     return {
@@ -130,7 +161,26 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
     }
 
 
-def extractFramesForVideo(videoName, videoDir, outputBaseDir, targetFPS=60, keypoints2dDir=None):
+def resolveVideoPath(videoName, videoDir, splitName=None):
+    """
+    Resolve the actual path to a video, checking split subdirectories.
+    """
+    videoDir = Path(videoDir)
+    
+    candidateDirs = []
+    if splitName:
+        candidateDirs.append(videoDir / splitName)
+    candidateDirs.append(videoDir)
+    
+    for baseDir in candidateDirs:
+        candidatePath = baseDir / f"{videoName}.mp4"
+        if candidatePath.exists():
+            return candidatePath
+    
+    return None
+
+
+def extractFramesForVideo(videoName, videoDir, outputBaseDir, targetFPS=60, keypoints2dDir=None, splitName=None):
     """
     Extract frames for a single video, aligned with annotations if available.
     
@@ -141,10 +191,13 @@ def extractFramesForVideo(videoName, videoDir, outputBaseDir, targetFPS=60, keyp
         targetFPS: Target FPS (default: 60)
         keypoints2dDir: Optional directory containing keypoints2d annotations
     """
-    videoPath = Path(videoDir) / f"{videoName}.mp4"
+    videoPath = resolveVideoPath(videoName, videoDir, splitName)
     
-    if not videoPath.exists():
-        print(f"✗ Video not found: {videoPath}")
+    if videoPath is None:
+        searchLocations = [Path(videoDir)]
+        if splitName:
+            searchLocations.insert(0, Path(videoDir) / splitName)
+        print(f"✗ Video not found: looked in {[str(p) for p in searchLocations]}")
         return False
     
     outputDir = Path(outputBaseDir) / videoName
@@ -253,7 +306,14 @@ def main():
         successful = 0
         for i, videoName in enumerate(videoNames):
             print(f"\n[{i+1}/{len(videoNames)}] Processing {videoName}...")
-            if extractFramesForVideo(videoName, args.videoDir, args.outputDir, args.targetFPS, keypoints2dDir):
+            if extractFramesForVideo(
+                videoName,
+                args.videoDir,
+                args.outputDir,
+                args.targetFPS,
+                keypoints2dDir,
+                splitName=args.split
+            ):
                 successful += 1
         
         print("\n" + "=" * 60)
