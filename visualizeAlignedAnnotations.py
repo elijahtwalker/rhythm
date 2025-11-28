@@ -12,28 +12,29 @@ import json
 from pathlib import Path
 import pickle
 
-import cv2
+from PIL import Image, ImageDraw
 import numpy as np
 
 # COCO-style skeleton definition with limb colors
+# Standard COCO skeleton (17 keypoints, 17 limbs)
 LIMBS = [
-    {"joints": (0, 1), "color": (0, 215, 255)},   # neck
-    {"joints": (1, 2), "color": (0, 255, 0)},     # r-shoulder
-    {"joints": (2, 3), "color": (0, 255, 0)},     # r-elbow
-    {"joints": (3, 4), "color": (0, 255, 0)},     # r-wrist
-    {"joints": (1, 5), "color": (255, 0, 0)},     # l-shoulder
-    {"joints": (5, 6), "color": (255, 0, 0)},     # l-elbow
-    {"joints": (6, 7), "color": (255, 0, 0)},     # l-wrist
-    {"joints": (1, 8), "color": (255, 255, 0)},   # torso
-    {"joints": (8, 9), "color": (255, 255, 0)},   # hip
-    {"joints": (9, 10), "color": (255, 255, 0)},  # r-knee
-    {"joints": (8, 12), "color": (255, 128, 0)},  # l-hip
-    {"joints": (12, 13), "color": (255, 128, 0)}, # l-knee
-    {"joints": (13, 14), "color": (255, 128, 0)}, # l-ankle
-    {"joints": (0, 15), "color": (255, 0, 255)},  # head-left
-    {"joints": (0, 16), "color": (255, 0, 255)},  # head-right
-    {"joints": (15, 17), "color": (0, 165, 255)}, # left eye/ear
-    {"joints": (16, 18), "color": (0, 165, 255)}  # right eye/ear
+    {"joints": (0, 1),  "color": (0, 165, 255)},  # nose-left eye
+    {"joints": (0, 2),  "color": (0, 165, 255)},  # nose-right eye
+    {"joints": (1, 3),  "color": (0, 200, 255)},  # left eye-ear
+    {"joints": (2, 4),  "color": (0, 200, 255)},  # right eye-ear
+    {"joints": (0, 5),  "color": (0, 255, 0)},    # nose-left shoulder
+    {"joints": (0, 6),  "color": (0, 255, 0)},    # nose-right shoulder
+    {"joints": (5, 7),  "color": (0, 200, 0)},    # left shoulder-elbow
+    {"joints": (7, 9),  "color": (0, 200, 0)},    # left elbow-wrist
+    {"joints": (6, 8),  "color": (0, 128, 0)},    # right shoulder-elbow
+    {"joints": (8, 10), "color": (0, 128, 0)},    # right elbow-wrist
+    {"joints": (5, 11), "color": (255, 200, 0)},  # left shoulder-hip
+    {"joints": (6, 12), "color": (255, 200, 0)},  # right shoulder-hip
+    {"joints": (11, 12),"color": (255, 255, 0)},  # hip connection
+    {"joints": (11, 13),"color": (255, 0, 255)},  # left hip-knee
+    {"joints": (13, 15),"color": (255, 0, 255)},  # left knee-ankle
+    {"joints": (12, 14),"color": (255, 255, 0)},  # right hip-knee
+    {"joints": (14, 16),"color": (255, 255, 0)},  # right knee-ankle
 ]
 
 
@@ -57,20 +58,44 @@ def loadFrameMapping(framesDir, videoName):
     return data.get("frame_mapping", {})
 
 
-def drawKeypointsOnFrame(frame, keypoints, minConfidence=0.3):
+def isPersonVisible(personKps, minConfidence=0.1, minVisibleJoints=6, minBoxSize=15):
+    """Decide if a person track looks valid enough to draw."""
+    validPoints = [
+        (x, y) for x, y, conf in personKps
+        if conf >= minConfidence and np.isfinite(x) and np.isfinite(y)
+    ]
+    if len(validPoints) < minVisibleJoints:
+        return False
+    xs, ys = zip(*validPoints)
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    return width >= minBoxSize and height >= minBoxSize
+
+
+def drawKeypointsOnFrame(frame, keypoints, minConfidence=0.1):
     """Draw keypoints and colored limbs on a frame."""
+    draw = ImageDraw.Draw(frame)
+    
     for idx, kp in enumerate(keypoints):
         x, y, conf = kp
-        if conf >= minConfidence:
-            cv2.circle(frame, (int(x), int(y)), 4, (0, 255, 0), -1)
+        if conf >= minConfidence and np.isfinite(x) and np.isfinite(y):
+            radius = 3
+            draw.ellipse(
+                (x - radius, y - radius, x + radius, y + radius),
+                fill=(0, 255, 0)
+            )
     
     for limb in LIMBS:
         a, b = limb["joints"]
         if a < len(keypoints) and b < len(keypoints):
             x1, y1, c1 = keypoints[a]
             x2, y2, c2 = keypoints[b]
-            if c1 >= minConfidence and c2 >= minConfidence:
-                cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), limb["color"], 3)
+            if (
+                c1 >= minConfidence and c2 >= minConfidence
+                and np.isfinite(x1) and np.isfinite(y1)
+                and np.isfinite(x2) and np.isfinite(y2)
+            ):
+                draw.line((x1, y1, x2, y2), fill=limb["color"], width=4)
     return frame
 
 
@@ -86,6 +111,25 @@ def overlayAnnotations(videoName, framesDir, keypointsDir, outputDir=None,
     keypoints2d = kpData.get("keypoints2d")
     if keypoints2d is None:
         raise ValueError("keypoints2d not found in annotation file")
+    
+    keypoints2d = np.asarray(keypoints2d)
+    if keypoints2d.ndim != 4:
+        raise ValueError(f"Unexpected keypoints2d shape {keypoints2d.shape}")
+    
+    # Ensure axis order is (frames, people, joints, 3)
+    numA, numB = keypoints2d.shape[:2]
+    if numA < numB:
+        # Most AIST files are (num_people, num_frames, 17, 3)
+        keypoints2d = np.transpose(keypoints2d, (1, 0, 2, 3))
+    
+    detScores = kpData.get("det_scores")
+    if detScores is not None:
+        detScores = np.asarray(detScores)
+        if detScores.ndim == 2:
+            if detScores.shape[0] < detScores.shape[1]:
+                detScores = detScores.T
+        else:
+            detScores = None
     
     mapping = loadFrameMapping(framesDir, videoName)
     if not mapping:
@@ -108,24 +152,38 @@ def overlayAnnotations(videoName, framesDir, keypointsDir, outputDir=None,
             print(f"Frame not found, skipping: {framePath}")
             continue
         
-        frame = cv2.imread(str(framePath))
-        if frame is None:
-            print(f"Could not read frame: {framePath}")
+        try:
+            frameImage = Image.open(framePath).convert("RGB")
+        except Exception as e:
+            print(f"Could not read frame {framePath}: {e}")
             continue
         
         people = keypoints2d[annotationIdx]
-        for personIdx, personKps in enumerate(people[:maxPeople]):
-            drawKeypointsOnFrame(frame, personKps, minConfidence=minConfidence)
+        scoresForFrame = detScores[annotationIdx] if detScores is not None else None
+        
+        filteredPeople = []
+        if scoresForFrame is not None and len(scoresForFrame) > 0:
+            topIdx = int(np.argmax(scoresForFrame))
+            filteredPeople.append((people[topIdx], scoresForFrame[topIdx]))
+        else:
+            filteredPeople.extend((personKps, None) for personKps in people)
+        
+        visiblePeople = []
+        for personKps, detScore in filteredPeople:
+            if detScore is not None and detScore < 0.1:
+                continue
+            if isPersonVisible(personKps, minConfidence=minConfidence):
+                visiblePeople.append(personKps)
+        
+        for personIdx, personKps in enumerate(visiblePeople[:maxPeople]):
+            drawKeypointsOnFrame(frameImage, personKps, minConfidence=minConfidence)
         
         if outputDir:
             outPath = outputDir / f"{videoName}_{filename}"
-            cv2.imwrite(str(outPath), frame)
+            frameImage.save(outPath)
         else:
-            cv2.imshow(videoName, frame)
-            key = cv2.waitKey(0)
-            if key == 27:  # ESC
-                cv2.destroyAllWindows()
-                return
+            frameImage.show(title=videoName)
+            return
         
         processed += 1
         if limit and processed >= limit:
@@ -145,7 +203,7 @@ def main():
     parser.add_argument("--framesDir", default="frames", help="Directory with extracted frames")
     parser.add_argument("--keypoints2dDir", default="keypoints2d", help="Directory with keypoints2d pickles")
     parser.add_argument("--outputDir", default=None, help="Optional directory to save overlay images")
-    parser.add_argument("--minConfidence", type=float, default=0.3, help="Minimum keypoint confidence to draw")
+    parser.add_argument("--minConfidence", type=float, default=0.1, help="Minimum keypoint confidence to draw")
     parser.add_argument("--maxPeople", type=int, default=2, help="Max number of people to draw per frame")
     parser.add_argument("--limit", type=int, default=20, help="Max number of frames to visualize (0 for all)")
     
