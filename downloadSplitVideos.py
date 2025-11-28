@@ -2,18 +2,37 @@
 """
 Download and organize AIST++ videos by splits.
 Downloads videos listed in split files and organizes them into split directories.
+Handles cAll videos by converting to available camera-specific versions.
 """
 
 import os
 import sys
 import argparse
 import urllib.request
+import urllib.error
 from pathlib import Path
 from functools import partial
 import multiprocessing
 
 
 SOURCE_URL = 'https://aistdancedb.ongaaccel.jp/v1.0.0/video/10M/'
+
+
+def getAvailableVideoNames(videoName):
+    """
+    Convert cAll video names to available camera-specific names.
+    Returns list of possible camera-specific video names to try.
+    """
+    if 'cAll' not in videoName:
+        return [videoName]
+    
+    # Try cameras c01 through c10
+    availableNames = []
+    for camNum in range(1, 11):
+        camName = f'c{camNum:02d}'
+        availableNames.append(videoName.replace('cAll', camName))
+    
+    return availableNames
 
 
 def downloadVideo(videoName, downloadFolder, splitName=None, showProgress=True):
@@ -34,47 +53,89 @@ def downloadVideo(videoName, downloadFolder, splitName=None, showProgress=True):
                 print(f"  ✓ {videoName}.mp4 already exists ({fileSizeMB:.1f} MB)")
             return True, "exists"
     
-    videoUrl = f"{SOURCE_URL}{videoName}.mp4"
+    # Get available video names to try (handles cAll → c01, c02, etc.)
+    availableNames = getAvailableVideoNames(videoName)
+    actualVideoName = None
     
-    if showProgress:
-        print(f"  Downloading {videoName}.mp4...", end='', flush=True)
-    
-    maxRetries = 3
-    for attempt in range(maxRetries):
-        try:
-            def reporthook(count, blockSize, totalSize):
-                if totalSize > 0 and showProgress:
-                    percent = min(100, int(count * blockSize * 100 / totalSize))
-                    downloadedMB = (count * blockSize) / (1024 * 1024)
-                    totalMB = totalSize / (1024 * 1024)
-                    print(f"\r  Downloading {videoName}.mp4... {percent}% ({downloadedMB:.1f}/{totalMB:.1f} MB)", 
-                          end='', flush=True)
-            
-            urllib.request.urlretrieve(videoUrl, str(savePath), reporthook=reporthook)
-            
-            if showProgress:
-                print()  # New line after progress
-            
-            if savePath.exists() and savePath.stat().st_size > 0:
-                fileSizeMB = savePath.stat().st_size / (1024 * 1024)
+    # Try each available camera version
+    for candidateName in availableNames:
+        videoUrl = f"{SOURCE_URL}{candidateName}.mp4"
+        
+        if showProgress and len(availableNames) > 1:
+            print(f"  Trying {candidateName}.mp4 (from {videoName})...", end='', flush=True)
+        elif showProgress:
+            print(f"  Downloading {videoName}.mp4...", end='', flush=True)
+        
+        maxRetries = 3
+        success = False
+        
+        for attempt in range(maxRetries):
+            try:
+                def reporthook(count, blockSize, totalSize):
+                    if totalSize > 0 and showProgress:
+                        percent = min(100, int(count * blockSize * 100 / totalSize))
+                        downloadedMB = (count * blockSize) / (1024 * 1024)
+                        totalMB = totalSize / (1024 * 1024)
+                        displayName = candidateName if len(availableNames) > 1 else videoName
+                        print(f"\r  Downloading {displayName}.mp4... {percent}% ({downloadedMB:.1f}/{totalMB:.1f} MB)", 
+                              end='', flush=True)
+                
+                urllib.request.urlretrieve(videoUrl, str(savePath), reporthook=reporthook)
+                
                 if showProgress:
-                    print(f"  ✓ Downloaded {videoName}.mp4 ({fileSizeMB:.1f} MB)")
-                return True, "downloaded"
+                    print()  # New line after progress
+                
+                if savePath.exists() and savePath.stat().st_size > 0:
+                    actualVideoName = candidateName
+                    success = True
+                    break
+                else:
+                    if savePath.exists():
+                        savePath.unlink()
+                    raise Exception("Downloaded file is empty")
+                    
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    # This camera version doesn't exist, try next
+                    if showProgress:
+                        print(f"\r  {candidateName}.mp4 not found (404), trying next camera...", end='', flush=True)
+                    break  # Try next camera
+                elif attempt < maxRetries - 1:
+                    if showProgress:
+                        print(f"\r  Retrying {candidateName}.mp4... (HTTP {e.code})", end='', flush=True)
+                    continue
+                else:
+                    if showProgress:
+                        print(f"\r  ✗ Failed: {candidateName}.mp4 - HTTP {e.code}")
+                    break  # Try next camera
+            except Exception as e:
+                if attempt < maxRetries - 1:
+                    if showProgress:
+                        print(f"\r  Retrying {candidateName}.mp4... (attempt {attempt + 2}/{maxRetries})", end='', flush=True)
+                    continue
+                else:
+                    if showProgress:
+                        print(f"\r  ✗ Failed: {candidateName}.mp4 - {str(e)}")
+                    break  # Try next camera
+        
+        if success:
+            break
+    
+    if success and actualVideoName:
+        fileSizeMB = savePath.stat().st_size / (1024 * 1024)
+        if showProgress:
+            if actualVideoName != videoName:
+                print(f"  ✓ Downloaded {actualVideoName}.mp4 as {videoName}.mp4 ({fileSizeMB:.1f} MB)")
             else:
-                if savePath.exists():
-                    savePath.unlink()
-                raise Exception("Downloaded file is empty")
-        except Exception as e:
-            if attempt < maxRetries - 1:
-                if showProgress:
-                    print(f"\r  Retrying {videoName}.mp4... (attempt {attempt + 2}/{maxRetries})", end='', flush=True)
-                continue
+                print(f"  ✓ Downloaded {videoName}.mp4 ({fileSizeMB:.1f} MB)")
+        return True, "downloaded"
+    else:
+        if showProgress:
+            if len(availableNames) > 1:
+                print(f"\r  ✗ Failed: {videoName}.mp4 - No camera version available (tried c01-c10)")
             else:
-                if showProgress:
-                    print(f"\r  ✗ Failed: {videoName}.mp4 - {str(e)}")
-                return False, str(e)
-    
-    return False, "unknown error"
+                print(f"\r  ✗ Failed: {videoName}.mp4 - Download failed")
+        return False, "Download failed"
 
 
 def downloadVideosForSplit(splitFile, downloadFolder, numProcesses=1):
@@ -92,6 +153,8 @@ def downloadVideosForSplit(splitFile, downloadFolder, numProcesses=1):
         videoNames = [line.strip() for line in f if line.strip()]
     
     print(f"\nDownloading {len(videoNames)} videos for {splitName}...")
+    if any('cAll' in name for name in videoNames):
+        print("  Note: Videos with 'cAll' will be downloaded as camera-specific versions (c01, c02, etc.)")
     
     successful = 0
     failed = 0
@@ -149,6 +212,13 @@ def downloadVideosForSplit(splitFile, downloadFolder, numProcesses=1):
             for videoName in failedVideos:
                 f.write(f"{videoName}\n")
         print(f"  Failed videos list saved to: {failedFile}")
+        
+        # Check if most failures are 404s
+        if failed > len(videoNames) * 0.5:  # More than 50% failed
+            print(f"\n⚠ Warning: {failed} videos failed to download.")
+            print(f"  Videos with 'cAll' are automatically converted to camera-specific versions.")
+            print(f"  If videos still fail, they may not be available in the official video list.")
+            print(f"  Check: https://storage.googleapis.com/aist_plusplus_public/20121228/video_list.txt")
 
 
 def main():
@@ -228,4 +298,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

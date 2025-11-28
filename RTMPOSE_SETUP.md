@@ -8,7 +8,18 @@ The conversion script (`convertToRTMPose.py`) converts AIST++ data to COCO forma
 
 ## Prerequisites
 
-1. **Extract frames from videos** (aligned with annotations):
+**Important:** RTM Pose training requires BOTH images and annotations:
+- **Images**: Input data (what the model sees)
+- **Annotations**: Ground truth labels (what the model should predict)
+
+1. **Download videos** (if not already downloaded):
+   ```bash
+   python3 downloadSplitVideos.py --split pose_train --numProcesses 4
+   ```
+   **Note:** If videos return 404 errors, you may need to download them from the official
+   AIST Dance Video Database website: https://aistdancedb.ongaaccel.jp/
+
+2. **Extract frames from videos** (aligned with annotations):
    ```bash
    python3 extractVideoFrames.py --split pose_train --alignWithAnnotations
    python3 extractVideoFrames.py --split pose_val --alignWithAnnotations

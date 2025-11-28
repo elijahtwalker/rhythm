@@ -1,2 +1,7 @@
 
 *.pkl
+*.mp4
+splits/
+videos/
+keypoints2d/
+__pycache__/
