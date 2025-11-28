@@ -1,4 +1,4 @@
-# AIST++ Dataset Tools
+# Rhythm!
 
 Simple tools for downloading, organizing, and working with the AIST++ dataset.
 
