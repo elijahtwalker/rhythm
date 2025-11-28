@@ -33,6 +33,8 @@ python3 loadAistData.py --annoDir . --split train
 - **`checkDataStatus.py`** - Check download status and what's missing
 - **`loadAistData.py`** - Load data using AIST++ API structure
 - **`visualizeKeypoints.py`** - Visualize 2D keypoints
+- **`extractVideoFrames.py`** - Extract frames at 60 FPS (aligned with annotations)
+- **`convertToRTMPose.py`** - Convert dataset to RTM Pose format
 
 ## Directory Structure
 
@@ -50,9 +52,26 @@ rhythm/
 └── keypoints2d/       # 2D keypoints (already present)
 ```
 
+## RTM Pose Integration
+
+To use with RTM Pose from MMPose:
+
+1. **Extract frames aligned with annotations:**
+   ```bash
+   python3 extractVideoFrames.py --split pose_train --alignWithAnnotations
+   ```
+
+2. **Convert to RTM Pose format:**
+   ```bash
+   python3 convertToRTMPose.py --split pose_train --outputDir rtmpose_dataset
+   ```
+
+3. **Use with RTM Pose training** (see `RTMPOSE_SETUP.md` for details)
+
 ## Notes
 
 - Videos are automatically organized into split directories
 - Already downloaded videos are skipped
 - Failed downloads are saved to `*_failed.txt` files
 - You must agree to AIST Terms of Use before downloading
+- Frames are extracted at exactly 60 FPS and aligned with annotations

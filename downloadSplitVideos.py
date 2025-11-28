@@ -16,8 +16,8 @@ import multiprocessing
 SOURCE_URL = 'https://aistdancedb.ongaaccel.jp/v1.0.0/video/10M/'
 
 
-def downloadVideo(videoName, downloadFolder, splitName=None):
-    """Download a single video."""
+def downloadVideo(videoName, downloadFolder, splitName=None, showProgress=True):
+    """Download a single video with progress reporting."""
     if splitName:
         splitDir = Path(downloadFolder) / splitName
         splitDir.mkdir(parents=True, exist_ok=True)
@@ -29,20 +29,49 @@ def downloadVideo(videoName, downloadFolder, splitName=None):
     if savePath.exists():
         fileSize = savePath.stat().st_size
         if fileSize > 1024 * 1024:  # At least 1MB
+            fileSizeMB = fileSize / (1024 * 1024)
+            if showProgress:
+                print(f"  ✓ {videoName}.mp4 already exists ({fileSizeMB:.1f} MB)")
             return True, "exists"
     
     videoUrl = f"{SOURCE_URL}{videoName}.mp4"
     
+    if showProgress:
+        print(f"  Downloading {videoName}.mp4...", end='', flush=True)
+    
     maxRetries = 3
     for attempt in range(maxRetries):
         try:
-            urllib.request.urlretrieve(videoUrl, str(savePath))
+            def reporthook(count, blockSize, totalSize):
+                if totalSize > 0 and showProgress:
+                    percent = min(100, int(count * blockSize * 100 / totalSize))
+                    downloadedMB = (count * blockSize) / (1024 * 1024)
+                    totalMB = totalSize / (1024 * 1024)
+                    print(f"\r  Downloading {videoName}.mp4... {percent}% ({downloadedMB:.1f}/{totalMB:.1f} MB)", 
+                          end='', flush=True)
+            
+            urllib.request.urlretrieve(videoUrl, str(savePath), reporthook=reporthook)
+            
+            if showProgress:
+                print()  # New line after progress
+            
             if savePath.exists() and savePath.stat().st_size > 0:
+                fileSizeMB = savePath.stat().st_size / (1024 * 1024)
+                if showProgress:
+                    print(f"  ✓ Downloaded {videoName}.mp4 ({fileSizeMB:.1f} MB)")
                 return True, "downloaded"
+            else:
+                if savePath.exists():
+                    savePath.unlink()
+                raise Exception("Downloaded file is empty")
         except Exception as e:
             if attempt < maxRetries - 1:
+                if showProgress:
+                    print(f"\r  Retrying {videoName}.mp4... (attempt {attempt + 2}/{maxRetries})", end='', flush=True)
                 continue
             else:
+                if showProgress:
+                    print(f"\r  ✗ Failed: {videoName}.mp4 - {str(e)}")
                 return False, str(e)
     
     return False, "unknown error"
@@ -70,10 +99,11 @@ def downloadVideosForSplit(splitFile, downloadFolder, numProcesses=1):
     failedVideos = []
     
     if numProcesses > 1:
-        # Multiprocessing
+        # Multiprocessing (progress shown per video)
         downloadFunc = partial(downloadVideo, 
                               downloadFolder=downloadFolder, 
-                              splitName=splitName)
+                              splitName=splitName,
+                              showProgress=True)
         pool = multiprocessing.Pool(processes=numProcesses)
         results = pool.map(downloadFunc, videoNames)
         pool.close()
@@ -89,9 +119,10 @@ def downloadVideosForSplit(splitFile, downloadFolder, numProcesses=1):
                 failed += 1
                 failedVideos.append(videoName)
     else:
-        # Single-threaded
+        # Single-threaded with detailed progress
         for i, videoName in enumerate(videoNames):
-            success, message = downloadVideo(videoName, downloadFolder, splitName)
+            print(f"\n[{i + 1}/{len(videoNames)}] ", end='', flush=True)
+            success, message = downloadVideo(videoName, downloadFolder, splitName, showProgress=True)
             
             if success:
                 if message == "exists":
@@ -102,9 +133,10 @@ def downloadVideosForSplit(splitFile, downloadFolder, numProcesses=1):
                 failed += 1
                 failedVideos.append(videoName)
             
+            # Show summary every 10 videos
             if (i + 1) % 10 == 0:
-                print(f"  Progress: {i + 1}/{len(videoNames)} "
-                     f"(Success: {successful}, Failed: {failed}, Skipped: {skipped})")
+                print(f"\n  Summary: {i + 1}/{len(videoNames)} processed "
+                     f"(✓ {successful}, ✗ {failed}, ⊘ {skipped})")
     
     print(f"\n{splitName} complete:")
     print(f"  Successful: {successful}")
