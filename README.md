@@ -6,7 +6,7 @@ End-to-end workflow for preparing the AIST++ dataset, generating aligned frames,
 
 ## 1. Environment Setup (Required)
 
-We hit segmentation faults with the system Python, so everything runs inside a dedicated virtual environment.
+When setting up and running our scripts we hit some segmentation faults with the system Python, so everything runs inside a venv.
 
 ```bash
 cd /YOUR/PATH/rhythm
@@ -55,7 +55,7 @@ rhythm/
 
 ## 4. Colab Notebook: `model_train_test_script.ipynb`
 
-Use this notebook as a reference for cloud/GPU preprocessing or training:
+We used this notebook in colab for training due to compute issues. Below is the setup:
 
 - Mount Google Drive and unzip `frames.zip` to `/content/drive/MyDrive/rhythm_frames`.
 - Install runtime deps inside the notebook session: `mediapipe`, `opencv-python`, `tqdm`.

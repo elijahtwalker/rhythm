@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Check AIST++ dataset download status.
-Shows what data is available and what needs to be downloaded.
-"""
-
 from pathlib import Path
 
 SKIP_SPLITS = {'pose_train_sample'}
@@ -22,7 +16,6 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
         if splitName in SKIP_SPLITS:
             continue
         
-        # Read video names from split
         with open(splitFile, 'r') as f:
             videoNames = [line.strip() for line in f if line.strip()]
         
@@ -36,18 +29,16 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
             'keypointVideos': set()
         }
         
-        # Check if videos exist
+        # check if videos exist
         for videoName in videoNames:
             videoFound = False
             stats['videoNames'].add(videoName)
-            
-            # Check in main video directory
+
             if (videoDir / f"{videoName}.mp4").exists():
                 stats['videos'] += 1
                 videoFound = True
                 stats['downloadedVideos'].add(videoName)
             
-            # Check in split-specific directory
             splitVideoDir = videoDir / splitName
             if splitVideoDir.exists() and (splitVideoDir / f"{videoName}.mp4").exists():
                 stats['videosInSplitDir'] += 1
@@ -56,7 +47,7 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
                     videoFound = True
                     stats['downloadedVideos'].add(videoName)
             
-            # Check keypoints2d
+            # check keypoints2d
             if keypoints2dDir and (keypoints2dDir / f"{videoName}.pkl").exists():
                 stats['keypoints2d'] += 1
                 stats['keypointVideos'].add(videoName)
@@ -67,7 +58,6 @@ def checkSplitStatus(splitsDir, videoDir, keypoints2dDir):
 
 
 def printStatusReport(results):
-    """Print a formatted status report."""
     print("\n" + "="*70)
     print("AIST++ Dataset Status Report")
     print("="*70)
@@ -136,8 +126,7 @@ def main():
         help='Directory containing keypoints2d (default: keypoints2d)')
     
     args = parser.parse_args()
-    
-    # Check if directories exist
+
     if not Path(args.splitsDir).exists():
         print(f"Error: Splits directory not found: {args.splitsDir}")
         return
@@ -145,8 +134,7 @@ def main():
     if not Path(args.videoDir).exists():
         print(f"Note: Video directory not found: {args.videoDir}")
         print("  Run: python3 downloadSplitVideos.py --split all")
-    
-    # Check status
+
     results = checkSplitStatus(args.splitsDir, args.videoDir, args.keypoints2dDir)
     printStatusReport(results)
 

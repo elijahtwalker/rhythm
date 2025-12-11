@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Overlay AIST++ keypoint annotations onto extracted frames to verify alignment.
-"""
-
 import argparse
 import json
 import pickle
@@ -32,13 +27,11 @@ def loadFrameMapping(framesDir, videoName):
     if mappingPath.exists():
         with open(mappingPath, 'r') as f:
             mappingData = json.load(f)
-        # Mapping keys are string indices
         entries = []
         for idxStr, meta in mappingData.get('frame_mapping', {}).items():
             entries.append((int(idxStr), meta['filename']))
         if entries:
             return sorted(entries, key=lambda x: x[0])
-    # Fallback: sequential filenames
     frameFiles = sorted((Path(framesDir) / videoName).glob('frame_*.jpg'))
     return [(i, frame.name) for i, frame in enumerate(frameFiles)]
 

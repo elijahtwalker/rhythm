@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Extract frames from videos at exactly 60 FPS.
-Converts videos to image sequences, resampling to 60 FPS regardless of original FPS.
-"""
-
 import argparse
 import json
 import pickle
@@ -15,7 +9,6 @@ import numpy as np
 
 
 def parseFpsValue(fpsString):
-    """Parse fps string from ffmpeg metadata (e.g., '30000/1001')."""
     if not fpsString or fpsString in ('0/0', '0'):
         return 0.0
     if '/' in fpsString:
@@ -26,13 +19,6 @@ def parseFpsValue(fpsString):
 
 
 def ffmpegVideoRead(videoPath, targetFPS=None):
-    """
-    Read video frames using ffmpeg, optionally resampling to targetFPS.
-    
-    Returns:
-        frames (np.ndarray): shape (num_frames, H, W, 3) in RGB
-        originalFPS (float): original video FPS from metadata
-    """
     videoPath = Path(videoPath)
     if not videoPath.exists():
         raise FileNotFoundError(f"{videoPath} does not exist")
@@ -62,19 +48,6 @@ def ffmpegVideoRead(videoPath, targetFPS=None):
 
 
 def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None):
-    """
-    Extract frames from video at exactly targetFPS (default 60 FPS).
-    If annotationPath is provided, extracts frames matching annotation timestamps.
-    
-    Args:
-        videoPath: Path to input video file
-        outputDir: Directory to save extracted frames
-        targetFPS: Target FPS (default: 60)
-        annotationPath: Optional path to keypoints2d pickle file for alignment
-    
-    Returns:
-        Dictionary with extraction info (frameCount, timestamps, etc.)
-    """
     videoPath = Path(videoPath)
     outputDir = Path(outputDir)
     outputDir.mkdir(parents=True, exist_ok=True)
@@ -101,7 +74,6 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
     print(f"  Duration: {duration:.2f} seconds")
     print(f"  Extracting at {targetFPSUsed:.2f} FPS...")
     
-    # Determine timestamp targets
     if timestamps is not None:
         targetTimes = [ts / 1000.0 for ts in timestamps]
         print(f"  Aligning with {len(targetTimes)} annotation timestamps")
@@ -121,7 +93,6 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
         targetTime = targetTimes[frameIndex]
         framePath = outputDir / f"frame_{frameIndex:06d}.jpg"
         
-        # Convert RGB to BGR for OpenCV writing
         frameBGR = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         cv2.imwrite(str(framePath), frameBGR)
         
@@ -134,7 +105,6 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
         extractedTimestamps.append(int(targetTime * 1000))
         savedCount += 1
     
-    # Save frame mapping metadata
     metadataPath = outputDir / 'frame_mapping.json'
     with open(metadataPath, 'w') as f:
         json.dump({
@@ -162,9 +132,6 @@ def extractFramesAt60FPS(videoPath, outputDir, targetFPS=60, annotationPath=None
 
 
 def resolveVideoPath(videoName, videoDir, splitName=None):
-    """
-    Resolve the actual path to a video, checking split subdirectories.
-    """
     videoDir = Path(videoDir)
     
     candidateDirs = []
@@ -181,16 +148,6 @@ def resolveVideoPath(videoName, videoDir, splitName=None):
 
 
 def extractFramesForVideo(videoName, videoDir, outputBaseDir, targetFPS=60, keypoints2dDir=None, splitName=None):
-    """
-    Extract frames for a single video, aligned with annotations if available.
-    
-    Args:
-        videoName: Video name (without extension)
-        videoDir: Directory containing videos
-        outputBaseDir: Base directory for output frames
-        targetFPS: Target FPS (default: 60)
-        keypoints2dDir: Optional directory containing keypoints2d annotations
-    """
     videoPath = resolveVideoPath(videoName, videoDir, splitName)
     
     if videoPath is None:
@@ -202,7 +159,6 @@ def extractFramesForVideo(videoName, videoDir, outputBaseDir, targetFPS=60, keyp
     
     outputDir = Path(outputBaseDir) / videoName
     
-    # Try to find corresponding annotation file
     annotationPath = None
     if keypoints2dDir:
         annotationPath = Path(keypoints2dDir) / f"{videoName}.pkl"
@@ -278,7 +234,6 @@ def main():
     keypoints2dDir = args.keypoints2dDir if args.alignWithAnnotations else None
     
     if args.videoPath:
-        # Process single video file
         outputDir = Path(args.outputDir) / Path(args.videoPath).stem
         annotationPath = None
         if args.alignWithAnnotations:
@@ -286,10 +241,8 @@ def main():
             annotationPath = Path(args.keypoints2dDir) / f"{videoName}.pkl"
         extractFramesAt60FPS(args.videoPath, outputDir, args.targetFPS, annotationPath)
     elif args.videoName:
-        # Process single video by name
         extractFramesForVideo(args.videoName, args.videoDir, args.outputDir, args.targetFPS, keypoints2dDir)
     elif args.split:
-        # Process all videos in a split
         splitsDir = Path(args.splitsDir)
         splitFile = splitsDir / f"{args.split}.txt"
         
