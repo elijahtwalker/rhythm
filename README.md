@@ -1,6 +1,6 @@
-# Rhythm!
+# Rhythm: Pose Detection for Multi-Genre Dance Choreography
 
-End-to-end workflow for preparing the AIST++ dataset, generating aligned frames, converting to COCO/RTM Pose, and visualizing overlays.
+End-to-end workflow for preparing the AIST++ dataset, generating aligned frames, running MediaPipe Pose, and visualizing overlays.
 
 ---
 
@@ -24,11 +24,11 @@ Activate the env (`source .venv/bin/activate`) before running any script. Run `d
 | Step | Required? | Command / Notes |
 |------|-----------|----------------|
 |Check current assets|Optional but helpful|`python3 checkDataStatus.py`|
-|Download videos|**Required** if you need frames/RTM Pose|`python3 downloadSplitVideos.py --split pose_train --numProcesses 4`<br/>If CDN URLs 404, download manually from [AIST Dance DB](https://aistdancedb.ongaaccel.jp/). Skip only if videos already exist locally.|
+|Download videos|**Required** if you need frames|`python3 downloadSplitVideos.py --split pose_train --numProcesses 4`<br/>If CDN URLs 404, download manually from [AIST Dance DB](https://aistdancedb.ongaaccel.jp/). Skip only if videos already exist locally.|
 |Inspect splits / statistics|Optional|`python3 loadAistData.py --annoDir . --stats`|
-|Extract frames aligned with annotations|**Required** for RTM Pose/workflows needing images|`python3 extractVideoFrames.py --split pose_train --alignWithAnnotations`<br/>Repeat for `pose_val` / `pose_test` if needed. Generates JPEG frames plus `frame_mapping.json` metadata using FFmpeg (exact 60 FPS or annotation timestamps).|
-|Convert to RTM Pose COCO format|**Required** for training|`python3 convertToRTMPose.py --split pose_train --outputDir rtmpose_dataset`<br/>Run for each split you plan to use.|
+|Extract frames aligned with annotations|**Required** for MediaPipe/workflows needing images|`python3 extractVideoFrames.py --split pose_train --alignWithAnnotations`<br/>Repeat for `pose_val` / `pose_test` if needed. Generates JPEG frames plus `frame_mapping.json` metadata using FFmpeg (exact 60 FPS or annotation timestamps).|
 |Overlay QA (stick figures)|Optional|`python3 visualizeAlignedAnnotations.py --videoName <video_id> --framesDir frames --keypoints2dDir keypoints2d --outputDir overlays/<video_id>_colored --limit 20`<br/>Uses detection scores + visibility heuristics to filter ghost tracks.|
+|Evaluate pose vs. ground truth|Optional but recommended|`python3 calculateOKS.py` for OKS summaries and per-keypoint detection stats (requires `keypoints2d/*.pkl` + `keypoints_mediapipe/*_keypoints.json`).<br/>`python3 calculatePDJ.py` for PDJ summaries using 0.05 × bbox diagonal as the threshold.|
 
 > `ignore_list.txt` tracks problematic videos (missing frames/annotations). Skip those when extracting or visualizing.
 
@@ -47,58 +47,21 @@ rhythm/
 │   ├── pose_train/
 │   ├── pose_val/
 │   └── pose_test/
-├── frames/<video_id>/          # generated JPEGs + frame_mapping.json
-├── overlays/<video_id>_colored # optional QA renders
-└── rtmpose_dataset/            # COCO-format output (images + annotations)
-```
-
-`rtmpose_dataset` layout:
-
-```
-rtmpose_dataset/
-├── train/
-│   ├── images/
-│   └── annotations/train.json
-├── val/
-│   ├── images/
-│   └── annotations/val.json
-└── test/
-    ├── images/
-    └── annotations/test.json
+├── frames/<video_id>/
+└── overlays/<video_id>_colored
 ```
 
 ---
 
-## 4. RTM Pose Integration
+## 4. Colab Notebook: `model_train_test_script.ipynb`
 
-1. **Prepare data** (Section 2). Frames + `rtmpose_dataset` must exist.
-2. **Install MMPose/RTM Pose** (outside this repo):
-   ```bash
-   git clone https://github.com/open-mmlab/mmpose.git
-   cd mmpose
-   pip install -v -e .
-   ```
-3. **Configure dataset paths:**
-   ```python
-   dataset_type = 'CocoDataset'
-   data_root = '/path/to/rhythm/rtmpose_dataset'
-   ann_file = 'train/annotations/train.json'
-   data_prefix = dict(img='train/images/')
-   ```
-4. **Train:**
-   ```bash
-   python tools/train.py \
-       configs/rtmpose/rtmpose-s_8xb256-420e_coco-256x192.py \
-       --work-dir work_dirs/rtmpose-s_aist
-   ```
-5. **Inference:**
-   ```bash
-   python tools/inference.py \
-       configs/rtmpose/rtmpose-s_8xb256-420e_coco-256x192.py \
-       checkpoints/rtmpose-s_simcc-coco.pth \
-       --input-path path/to/images \
-       --output-path vis_results
-   ```
+Use this notebook as a reference for cloud/GPU preprocessing or training:
+
+- Mount Google Drive and unzip `frames.zip` to `/content/drive/MyDrive/rhythm_frames`.
+- Install runtime deps inside the notebook session: `mediapipe`, `opencv-python`, `tqdm`.
+- Set output folders (for example `/content/pose_keypoints` or `/content/pose_keypoints_single_video`).
+- Run the MediaPipe Pose loop to generate per-video JSON keypoint dumps (`<video>/<video>_keypoints.json`).
+- Optional cells show how to draw pose overlays on sample frames for quick QA.
 
 ---
 
@@ -110,9 +73,10 @@ rtmpose_dataset/
 |`downloadSplitVideos.py`|Download videos per split; handles retries/404 messaging.|
 |`loadAistData.py`|Loader matching the official AIST++ API; inspect stats or read pickles.|
 |`extractVideoFrames.py`|FFmpeg-based extractor (60 FPS or annotation timestamps) with `frame_mapping.json`.|
-|`convertToRTMPose.py`|Build COCO-format dataset (images + annotations + bounding boxes).|
 |`visualizeKeypoints.py`|Quick matplotlib viewer for `.pkl` files.|
 |`visualizeAlignedAnnotations.py`|Overlay frames with annotations, filtering low-score tracks.|
+|`calculateOKS.py`|Compute OKS per frame/keypoint and global averages vs. MediaPipe outputs.|
+|`calculatePDJ.py`|Compute PDJ (0.05 × bbox diagonal) detection rates vs. MediaPipe outputs.|
 
 ---
 
@@ -138,8 +102,9 @@ Following this guide from top to bottom reproduces the entire pipeline:
 
 1. Set up the virtual environment (required).
 2. Download videos if you need images (optional).
-3. Extract frames with alignment (required for RTM Pose / overlays).
-4. Convert to RTM Pose (required for training).
-5. Train/infer with RTM Pose, or optionally visualize overlays for QA.
+3. Extract frames with alignment (required for MediaPipe / overlays).
+4. Use the Colab notebook for MediaPipe-based preprocessing or quick runs if you prefer GPU-in-the-cloud.
+5. Optionally visualize overlays for QA.
+6. Optionally evaluate MediaPipe vs. ground truth with `calculateOKS.py` / `calculatePDJ.py`.
 
-Everything else—extra stats, overlays, selective downloads—remains optional and is clearly labeled above. Enjoy!***
+Everything else—extra stats, overlays, selective downloads—remains optional and is clearly labeled above. Enjoy!
