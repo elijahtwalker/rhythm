@@ -105,7 +105,6 @@ def overlayAnnotations(videoName, framesDir, keypointsDir, outputDir,
     
     return processed, len(mapping)
 
-
 def main():
     parser = argparse.ArgumentParser(
         description="Overlay keypoint annotations onto extracted frames")
@@ -150,9 +149,7 @@ def main():
         maxFrames=args.maxFrames,
         minConfidence=args.minConfidence
     )
-    
     print(f"Overlay complete: {processed}/{total} frames written to {args.outputDir}/{args.videoName}")
-
 
 if __name__ == '__main__':
     main()
